@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="com.example.tigg_nizi_pos">
+
+    <!-- Declared here so host apps get it automatically via manifest merge -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+</manifest>
