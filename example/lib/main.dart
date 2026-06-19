@@ -1,7 +1,50 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:tigg_nizi_pos/tigg_nizi_pos.dart';
+
+// ── Image processing (runs in a separate isolate via compute()) ───────────────
+
+/// Crops [src] to a 3 : 4 ratio by trimming the longer axis, then resizes to
+/// exactly 240 × 320.
+img.Image _fitTo240x320(img.Image src) {
+  const tw = 240, th = 320;
+  final srcAspect = src.width / src.height;
+  const targetAspect = tw / th;
+
+  img.Image cropped;
+  if ((srcAspect - targetAspect).abs() < 0.02) {
+    cropped = src;
+  } else if (srcAspect > targetAspect) {
+    final newW = (src.height * targetAspect).round();
+    cropped = img.copyCrop(
+        src, x: (src.width - newW) ~/ 2, y: 0, width: newW, height: src.height);
+  } else {
+    final newH = (src.width / targetAspect).round();
+    cropped = img.copyCrop(
+        src, x: 0, y: (src.height - newH) ~/ 2, width: src.width, height: newH);
+  }
+  return img.copyResize(cropped,
+      width: tw, height: th, interpolation: img.Interpolation.average);
+}
+
+/// Entry-point for compute(): decodes, crops, resizes to 240 × 320, encodes as
+/// JPEG baseline, adjusts quality downward until the result is ≤ 30 KB.
+Uint8List processLogoForB30(Uint8List raw) {
+  final src =
+      img.decodeImage(raw) ?? (throw Exception('Cannot decode image'));
+  final resized = _fitTo240x320(src);
+
+  for (int q = 85; q >= 10; q -= 5) {
+    final bytes = img.encodeJpg(resized, quality: q);
+    if (bytes.length <= 30 * 1024) return Uint8List.fromList(bytes);
+  }
+  return Uint8List.fromList(img.encodeJpg(resized, quality: 10));
+}
 
 void main() {
   runApp(const MyApp());
@@ -73,8 +116,14 @@ class _B30DemoPageState extends State<B30DemoPage> {
   final _infoTitleCtrl = TextEditingController(text: 'Important');
   final _infoMsgCtrl = TextEditingController(text: 'Keep device connected');
 
-  // Logo file
-  final _logoFileCtrl = TextEditingController(text: 'logo.bmp');
+  // Logo file (FSREAD command)
+  final _logoFileCtrl = TextEditingController(text: 'logo.jpg');
+
+  // Image upload / preparation
+  final _imagePicker = ImagePicker();
+  Uint8List? _processedImageBytes;
+  bool _isProcessingImage = false;
+  String _imageStatusMsg = '';
 
   // Screen timeout
   final _screentimeCtrl = TextEditingController(text: '60');
@@ -175,6 +224,34 @@ class _B30DemoPageState extends State<B30DemoPage> {
 
   bool get _connected => _connectionState == B30ConnectionState.connected;
 
+  // ── Logo image preparation ──────────────────────────────────────────────────
+
+  Future<void> _pickAndProcessImage() async {
+    final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+    if (picked == null) return;
+
+    setState(() {
+      _isProcessingImage = true;
+      _processedImageBytes = null;
+      _imageStatusMsg = 'Processing…';
+    });
+
+    try {
+      final raw = await picked.readAsBytes();
+      final processed = await compute(processLogoForB30, raw);
+      final kb = processed.length / 1024;
+      setState(() {
+        _processedImageBytes = processed;
+        _imageStatusMsg =
+            '${kb.toStringAsFixed(1)} KB  ·  240 × 320  ·  JPEG baseline ✓';
+      });
+    } catch (e) {
+      setState(() => _imageStatusMsg = 'Error: $e');
+    } finally {
+      setState(() => _isProcessingImage = false);
+    }
+  }
+
   // ── Build ───────────────────────────────────────────────────────────────────
 
   @override
@@ -263,6 +340,13 @@ class _B30DemoPageState extends State<B30DemoPage> {
             'Logo file',
             () => _pos.showLogoFromFile(_logoFileCtrl.text.trim()),
           ),
+        ),
+        // Logo image preparation card
+        _LogoPreparationCard(
+          isProcessing: _isProcessingImage,
+          processedBytes: _processedImageBytes,
+          statusMsg: _imageStatusMsg,
+          onPick: _pickAndProcessImage,
         ),
 
         // ── Display ───────────────────────────────────────────────────────────
@@ -618,6 +702,101 @@ class _InputCard extends StatelessWidget {
                 onPressed: onSend,
                 child: const Text('Send'),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LogoPreparationCard extends StatelessWidget {
+  const _LogoPreparationCard({
+    required this.isProcessing,
+    required this.processedBytes,
+    required this.statusMsg,
+    required this.onPick,
+  });
+
+  final bool isProcessing;
+  final Uint8List? processedBytes;
+  final String statusMsg;
+  final VoidCallback onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.upload_file,
+                    size: 18, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                const Text('Prepare Logo Image',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Picks from gallery → crops to 3:4 → resizes to 240 × 320 → JPEG baseline ≤ 30 KB',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 10),
+            if (isProcessing)
+              const SizedBox(
+                height: 80,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (processedBytes != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.memory(
+                  processedBytes!,
+                  width: 80,
+                  height: 107, // 80 × (320/240) keeps 3:4 ratio
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, size: 14, color: Colors.green),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(statusMsg,
+                        style: const TextStyle(
+                            fontSize: 12, color: Colors.green)),
+                  ),
+                ],
+              ),
+            ] else if (statusMsg.isNotEmpty) ...[
+              Row(
+                children: [
+                  const Icon(Icons.error_outline,
+                      size: 14, color: Colors.red),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(statusMsg,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.red)),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: isProcessing ? null : onPick,
+              icon: const Icon(Icons.photo_library_outlined, size: 18),
+              label: Text(processedBytes == null
+                  ? 'Choose from Gallery'
+                  : 'Choose Different Image'),
             ),
           ],
         ),
