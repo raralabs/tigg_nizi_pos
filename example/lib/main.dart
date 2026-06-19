@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
@@ -22,28 +23,67 @@ img.Image _fitTo240x320(img.Image src) {
   } else if (srcAspect > targetAspect) {
     final newW = (src.height * targetAspect).round();
     cropped = img.copyCrop(
-        src, x: (src.width - newW) ~/ 2, y: 0, width: newW, height: src.height);
+      src,
+      x: (src.width - newW) ~/ 2,
+      y: 0,
+      width: newW,
+      height: src.height,
+    );
   } else {
     final newH = (src.width / targetAspect).round();
     cropped = img.copyCrop(
-        src, x: 0, y: (src.height - newH) ~/ 2, width: src.width, height: newH);
+      src,
+      x: 0,
+      y: (src.height - newH) ~/ 2,
+      width: src.width,
+      height: newH,
+    );
   }
-  return img.copyResize(cropped,
-      width: tw, height: th, interpolation: img.Interpolation.average);
+  return img.copyResize(
+    cropped,
+    width: tw,
+    height: th,
+    interpolation: img.Interpolation.average,
+  );
 }
 
-/// Entry-point for compute(): decodes, crops, resizes to 240 × 320, encodes as
-/// JPEG baseline, adjusts quality downward until the result is ≤ 30 KB.
+/// Entry-point for compute(): decodes, crops, resizes to 240 × 320, converts
+/// to a true 1-component (Ncomp = 1) grayscale JPEG baseline ≤ 30 KB.
+///
+/// img.grayscale() only sets R=G=B=luminance but keeps the same channel count,
+/// so encodeJpg would still produce a 3-component YCbCr JPEG. To get a true
+/// single-component JPEG we build a raw 1-byte-per-pixel buffer manually and
+/// construct the Image with numChannels: 1.
 Uint8List processLogoForB30(Uint8List raw) {
-  final src =
-      img.decodeImage(raw) ?? (throw Exception('Cannot decode image'));
+  final src = img.decodeImage(raw) ?? (throw Exception('Cannot decode image'));
   final resized = _fitTo240x320(src);
 
+  // Build a 1-byte-per-pixel luminance buffer (standard BT.601 coefficients).
+  final grayBuf = Uint8List(240 * 320);
+  var i = 0;
+  for (int y = 0; y < 320; y++) {
+    for (int x = 0; x < 240; x++) {
+      final p = resized.getPixel(x, y);
+      grayBuf[i++] =
+          (p.r.toDouble() * 0.299 + p.g.toDouble() * 0.587 + p.b.toDouble() * 0.114)
+              .round()
+              .clamp(0, 255);
+    }
+  }
+
+  // numChannels: 1 → encodeJpg writes Ncomp=1 in SOF0 (grayscale JPEG).
+  final gray1ch = img.Image.fromBytes(
+    width: 240,
+    height: 320,
+    bytes: grayBuf.buffer,
+    numChannels: 1,
+  );
+
   for (int q = 85; q >= 10; q -= 5) {
-    final bytes = img.encodeJpg(resized, quality: q);
+    final bytes = img.encodeJpg(gray1ch, quality: q);
     if (bytes.length <= 30 * 1024) return Uint8List.fromList(bytes);
   }
-  return Uint8List.fromList(img.encodeJpg(resized, quality: 10));
+  return Uint8List.fromList(img.encodeJpg(gray1ch, quality: 10));
 }
 
 void main() {
@@ -92,7 +132,9 @@ class _B30DemoPageState extends State<B30DemoPage> {
   // QR
   final _qrAmountCtrl = TextEditingController(text: 'Rs. 123.45');
   final _qrActionCtrl = TextEditingController(text: 'Scan to pay');
-  final _qrDataCtrl = TextEditingController(text: 'https://yarsa.tech/products/nizipos/b30');
+  final _qrDataCtrl = TextEditingController(
+    text: 'https://yarsa.tech/products/nizipos/b30',
+  );
 
   // Loading
   final _loadingAmountCtrl = TextEditingController(text: 'Rs. 560.50');
@@ -154,7 +196,9 @@ class _B30DemoPageState extends State<B30DemoPage> {
       _textTitleCtrl,
       _textSubtitleCtrl,
       _textMsgCtrl,
-      _qrAmountCtrl, _qrActionCtrl, _qrDataCtrl,
+      _qrAmountCtrl,
+      _qrActionCtrl,
+      _qrDataCtrl,
       _loadingAmountCtrl,
       _loadingMsgCtrl,
       _successTitleCtrl,
@@ -226,6 +270,22 @@ class _B30DemoPageState extends State<B30DemoPage> {
 
   // ── Logo image preparation ──────────────────────────────────────────────────
 
+  Future<void> _uploadImageToDevice() async {
+    final bytes = _processedImageBytes;
+    if (bytes == null) return;
+    setState(() => _imageStatusMsg = 'Uploading to device…');
+    try {
+      await _pos.displayRealTimeImage(bytes);
+      setState(
+        () => _imageStatusMsg =
+            '${(bytes.length / 1024).toStringAsFixed(1)} KB  ·  240 × 320  ·  JPEG baseline ✓  ·  displayed on device',
+      );
+    } catch (e) {
+      setState(() => _imageStatusMsg = 'Upload error: $e');
+      log('Image upload error', error: e);
+    }
+  }
+
   Future<void> _pickAndProcessImage() async {
     final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
@@ -247,6 +307,7 @@ class _B30DemoPageState extends State<B30DemoPage> {
       });
     } catch (e) {
       setState(() => _imageStatusMsg = 'Error: $e');
+      log('Image processing error', error: e);
     } finally {
       setState(() => _isProcessingImage = false);
     }
@@ -347,6 +408,7 @@ class _B30DemoPageState extends State<B30DemoPage> {
           processedBytes: _processedImageBytes,
           statusMsg: _imageStatusMsg,
           onPick: _pickAndProcessImage,
+          onUpload: _processedImageBytes != null ? _uploadImageToDevice : null,
         ),
 
         // ── Display ───────────────────────────────────────────────────────────
@@ -716,12 +778,14 @@ class _LogoPreparationCard extends StatelessWidget {
     required this.processedBytes,
     required this.statusMsg,
     required this.onPick,
+    this.onUpload,
   });
 
   final bool isProcessing;
   final Uint8List? processedBytes;
   final String statusMsg;
   final VoidCallback onPick;
+  final VoidCallback? onUpload;
 
   @override
   Widget build(BuildContext context) {
@@ -735,18 +799,24 @@ class _LogoPreparationCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.upload_file,
-                    size: 18, color: theme.colorScheme.primary),
+                Icon(
+                  Icons.upload_file,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
-                const Text('Prepare Logo Image',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text(
+                  'Prepare Logo Image',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
               'Picks from gallery → crops to 3:4 → resizes to 240 × 320 → JPEG baseline ≤ 30 KB',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: Colors.grey.shade600),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade600,
+              ),
             ),
             const SizedBox(height: 10),
             if (isProcessing)
@@ -770,33 +840,48 @@ class _LogoPreparationCard extends StatelessWidget {
                   const Icon(Icons.check_circle, size: 14, color: Colors.green),
                   const SizedBox(width: 4),
                   Expanded(
-                    child: Text(statusMsg,
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.green)),
+                    child: Text(
+                      statusMsg,
+                      style: const TextStyle(fontSize: 12, color: Colors.green),
+                    ),
                   ),
                 ],
               ),
             ] else if (statusMsg.isNotEmpty) ...[
               Row(
                 children: [
-                  const Icon(Icons.error_outline,
-                      size: 14, color: Colors.red),
+                  const Icon(Icons.error_outline, size: 14, color: Colors.red),
                   const SizedBox(width: 4),
                   Expanded(
-                    child: Text(statusMsg,
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.red)),
+                    child: Text(
+                      statusMsg,
+                      style: const TextStyle(fontSize: 12, color: Colors.red),
+                    ),
                   ),
                 ],
               ),
             ],
             const SizedBox(height: 10),
-            FilledButton.icon(
-              onPressed: isProcessing ? null : onPick,
-              icon: const Icon(Icons.photo_library_outlined, size: 18),
-              label: Text(processedBytes == null
-                  ? 'Choose from Gallery'
-                  : 'Choose Different Image'),
+            Row(
+              children: [
+                FilledButton.icon(
+                  onPressed: isProcessing ? null : onPick,
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                  label: Text(
+                    processedBytes == null
+                        ? 'Choose from Gallery'
+                        : 'Change Image',
+                  ),
+                ),
+                if (onUpload != null) ...[
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: isProcessing ? null : onUpload,
+                    icon: const Icon(Icons.send_to_mobile, size: 18),
+                    label: const Text('Send to Device'),
+                  ),
+                ],
+              ],
             ),
           ],
         ),

@@ -35,4 +35,12 @@ class MethodChannelTiggNiziPos extends TiggNiziPosPlatform {
       (event) => Map<String, dynamic>.from(event as Map),
     );
   }
+
+  @override
+  Future<void> displayRealTimeImage(Uint8List jpegBytes) async {
+    await methodChannel.invokeMethod<void>(
+      'displayRealTimeImage',
+      {'jpegBytes': jpegBytes},
+    );
+  }
 }

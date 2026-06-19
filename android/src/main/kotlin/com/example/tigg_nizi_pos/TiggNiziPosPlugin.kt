@@ -10,6 +10,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -94,6 +95,11 @@ class TiggNiziPosPlugin : FlutterPlugin, MethodCallHandler {
                 val command = call.argument<String>("command")
                     ?: return result.error("INVALID_ARG", "command is required", null)
                 handleSendCommand(command, result)
+            }
+            "displayRealTimeImage" -> {
+                val bytes = call.argument<ByteArray>("jpegBytes")
+                    ?: return result.error("INVALID_ARG", "jpegBytes is required", null)
+                handleDisplayRealTimeImage(bytes, result)
             }
             else -> result.notImplemented()
         }
@@ -192,6 +198,71 @@ class TiggNiziPosPlugin : FlutterPlugin, MethodCallHandler {
         }.start()
     }
 
+    // ── Real-time image upload ────────────────────────────────────────────────
+
+    private fun handleDisplayRealTimeImage(jpegBytes: ByteArray, result: Result) {
+        val port = serialPort
+            ?: return result.error("NOT_CONNECTED", "Device is not connected", null)
+
+        Thread {
+            try {
+                // Flush any stale data sitting in the receive buffer.
+                val flush = ByteArray(READ_BUF_SIZE)
+                port.read(flush, 100)
+
+                // Step 1+2 — send command + 8-byte header as a single write so
+                // the device receives them atomically.
+                //   [0..13]  START_RTIMAGE\n  (14 bytes)
+                //   [14..17] MAGIC_FRAME       (4 bytes)
+                //   [18..21] JPEG length       (4 bytes, little-endian)
+                val len = jpegBytes.size
+                val cmd = "START_RTIMAGE\n".toByteArray(Charsets.UTF_8)
+                val packet = ByteArray(cmd.size + 8)
+                cmd.copyInto(packet)
+                MAGIC_FRAME.copyInto(packet, destinationOffset = cmd.size)
+                packet[cmd.size + 4] = (len and 0xFF).toByte()
+                packet[cmd.size + 5] = ((len shr 8) and 0xFF).toByte()
+                packet[cmd.size + 6] = ((len shr 16) and 0xFF).toByte()
+                packet[cmd.size + 7] = ((len shr 24) and 0xFF).toByte()
+                port.write(packet, 2000)
+
+                // Step 3 — wait for 'R' (Ready).
+                val ackBuf = ByteArray(READ_BUF_SIZE)
+                val ackRead = port.read(ackBuf, 5000)
+                val ackStr = if (ackRead > 0) String(ackBuf, 0, ackRead, Charsets.US_ASCII) else ""
+                Log.d(TAG, "ACK bytes=$ackRead hex=${ackBuf.take(ackRead).joinToString(" ") { "%02X".format(it) }}")
+                if (ackRead <= 0 || !ackStr.contains('R')) {
+                    result.error("NO_READY", "Expected 'R', got: ${ackStr.ifEmpty { "<timeout>" }}", null)
+                    return@Thread
+                }
+
+                // Step 4 — write all JPEG bytes in one call.
+                // Log first 4 bytes so we can verify JPEG SOI (FF D8) and
+                // confirm 1-channel vs 3-channel (check SOF0 Ncomp byte).
+                Log.d(TAG, "Sending ${jpegBytes.size} bytes, header=${jpegBytes.take(4).joinToString(" ") { "%02X".format(it) }}")
+                val writeTimeout = maxOf(10_000, jpegBytes.size / 10)
+                port.write(jpegBytes, writeTimeout)
+
+                // Step 5 — wait for 'K' (OK) or 'E' (Error).
+                val resBuf = ByteArray(READ_BUF_SIZE)
+                val resRead = port.read(resBuf, 15_000)
+                if (resRead <= 0) {
+                    result.error("TIMEOUT", "No final response from device", null)
+                    return@Thread
+                }
+                val res = String(resBuf, 0, resRead, Charsets.US_ASCII)
+                Log.d(TAG, "Final response bytes=$resRead hex=${resBuf.take(resRead).joinToString(" ") { "%02X".format(it) }}")
+                when {
+                    res.contains('K') -> result.success(null)
+                    res.contains('E') -> result.error("DEVICE_ERROR", "Device rejected the image", null)
+                    else -> result.error("UNKNOWN_RESPONSE", "Unexpected: $res", null)
+                }
+            } catch (e: Exception) {
+                result.error("TRANSFER_ERROR", e.message, null)
+            }
+        }.start()
+    }
+
     // ── BroadcastReceiver lifecycle ───────────────────────────────────────────
 
     private fun registerReceiver() {
@@ -217,5 +288,24 @@ class TiggNiziPosPlugin : FlutterPlugin, MethodCallHandler {
             appContext?.unregisterReceiver(usbReceiver)
         } catch (_: Exception) {}
         receiverRegistered = false
+    }
+
+    companion object {
+        private const val TAG = "TiggNiziPos"
+
+        // TODO: Confirm the exact magic-frame bytes with the B30 hardware spec.
+        // These 4 bytes are sent immediately before the 4-byte JPEG length in
+        // the START_RTIMAGE header.
+        private val MAGIC_FRAME = byteArrayOf(
+            0xA5.toByte(), 0x5A.toByte(), 0xA5.toByte(), 0x5A.toByte()
+        )
+
+        // USB bulk read buffers must be at least as large as the endpoint's
+        // maxPacketSize (64 bytes for full-speed, 512 for high-speed).
+        // 256 bytes is a safe minimum that avoids ArrayIndexOutOfBoundsException
+        // when the driver tries to copy a full USB packet into the buffer.
+        private const val READ_BUF_SIZE = 256
+
+        private const val CHUNK_SIZE = 4096
     }
 }

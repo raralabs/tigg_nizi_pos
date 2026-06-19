@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'tigg_nizi_pos_platform_interface.dart';
 
 export 'tigg_nizi_pos_platform_interface.dart';
@@ -130,4 +132,22 @@ class TiggNiziPos {
     }
     return sendCommand('SCREENTIME**$seconds');
   }
+
+  // ── Real-time image upload ─────────────────────────────────────────────────
+
+  /// Transfers [jpegBytes] to the B30 display using the START_RTIMAGE
+  /// protocol and renders it immediately — no file system write needed.
+  ///
+  /// Protocol flow:
+  ///   1. HOST → `START_RTIMAGE\n`
+  ///   2. HOST → MAGIC_FRAME (4 bytes) + JPEG length (4 bytes, little-endian)
+  ///   3. DEVICE → `R`  (ready)
+  ///   4. HOST → JPEG binary data in chunks
+  ///   5. DEVICE → `K` (success) | `E` (error)
+  ///
+  /// [jpegBytes] must be JPEG baseline, exactly 240 × 320 px, ≤ 30 KB.
+  /// Use the top-level [processLogoForB30] helper (from the example) to
+  /// prepare an image from the gallery before calling this method.
+  Future<void> displayRealTimeImage(Uint8List jpegBytes) =>
+      TiggNiziPosPlatform.instance.displayRealTimeImage(jpegBytes);
 }

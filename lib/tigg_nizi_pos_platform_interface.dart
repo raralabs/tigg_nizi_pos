@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'tigg_nizi_pos_method_channel.dart';
@@ -32,5 +34,13 @@ abstract class TiggNiziPosPlatform extends PlatformInterface {
 
   Stream<Map<String, dynamic>> get connectionStream {
     throw UnimplementedError('connectionStream has not been implemented.');
+  }
+
+  /// Transfers [jpegBytes] to the device using the START_RTIMAGE protocol and
+  /// displays it immediately.  The bytes must be JPEG baseline, 240 × 320 px,
+  /// ≤ 30 KB.
+  Future<void> displayRealTimeImage(Uint8List jpegBytes) {
+    throw UnimplementedError(
+        'displayRealTimeImage() has not been implemented.');
   }
 }
