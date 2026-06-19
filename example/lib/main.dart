@@ -48,7 +48,8 @@ class _B30DemoPageState extends State<B30DemoPage> {
 
   // QR
   final _qrAmountCtrl = TextEditingController(text: 'Rs. 123.45');
-  final _qrDataCtrl = TextEditingController(text: 'upi://pay?pa=demo@upi');
+  final _qrActionCtrl = TextEditingController(text: 'Scan to pay');
+  final _qrDataCtrl = TextEditingController(text: 'https://yarsa.tech/products/nizipos/b30');
 
   // Loading
   final _loadingAmountCtrl = TextEditingController(text: 'Rs. 560.50');
@@ -60,7 +61,9 @@ class _B30DemoPageState extends State<B30DemoPage> {
 
   // Failure
   final _failAmountCtrl = TextEditingController(text: 'Rs. 560.50');
-  final _failMsgCtrl = TextEditingController(text: 'Payment failed. Try again.');
+  final _failMsgCtrl = TextEditingController(
+    text: 'Payment failed. Try again.',
+  );
 
   // Warning
   final _warnTitleCtrl = TextEditingController(text: 'Device Not Ready');
@@ -99,14 +102,23 @@ class _B30DemoPageState extends State<B30DemoPage> {
   void dispose() {
     _connectionSub?.cancel();
     for (final c in [
-      _textTitleCtrl, _textSubtitleCtrl, _textMsgCtrl,
-      _qrAmountCtrl, _qrDataCtrl,
-      _loadingAmountCtrl, _loadingMsgCtrl,
-      _successTitleCtrl, _successMsgCtrl,
-      _failAmountCtrl, _failMsgCtrl,
-      _warnTitleCtrl, _warnMsgCtrl,
-      _infoTitleCtrl, _infoMsgCtrl,
-      _logoFileCtrl, _screentimeCtrl, _rawCmdCtrl,
+      _textTitleCtrl,
+      _textSubtitleCtrl,
+      _textMsgCtrl,
+      _qrAmountCtrl, _qrActionCtrl, _qrDataCtrl,
+      _loadingAmountCtrl,
+      _loadingMsgCtrl,
+      _successTitleCtrl,
+      _successMsgCtrl,
+      _failAmountCtrl,
+      _failMsgCtrl,
+      _warnTitleCtrl,
+      _warnMsgCtrl,
+      _infoTitleCtrl,
+      _infoMsgCtrl,
+      _logoFileCtrl,
+      _screentimeCtrl,
+      _rawCmdCtrl,
     ]) {
       c.dispose();
     }
@@ -200,10 +212,9 @@ class _B30DemoPageState extends State<B30DemoPage> {
             const SizedBox(height: 16),
             Text(
               'B30 device not connected',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(color: Colors.grey),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(color: Colors.grey),
             ),
             const SizedBox(height: 8),
             Text(
@@ -216,8 +227,12 @@ class _B30DemoPageState extends State<B30DemoPage> {
               onPressed: _isConnecting ? null : _connect,
               icon: _isConnecting
                   ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : const Icon(Icons.usb),
               label: Text(_isConnecting ? 'Connecting…' : 'Connect Device'),
@@ -273,13 +288,15 @@ class _B30DemoPageState extends State<B30DemoPage> {
           title: 'QR Code',
           icon: Icons.qr_code,
           fields: [
-            _Fld('Amount', _qrAmountCtrl),
-            _Fld('QR Payload', _qrDataCtrl),
+            _Fld('Amount (e.g. Rs. 1234.00)', _qrAmountCtrl),
+            _Fld('Action Text (e.g. Scan to pay)', _qrActionCtrl),
+            _Fld('QR Payload / URL', _qrDataCtrl),
           ],
           onSend: () => _run(
             'QR code',
             () => _pos.displayQR(
               amount: _qrAmountCtrl.text,
+              actionText: _qrActionCtrl.text,
               qrData: _qrDataCtrl.text,
             ),
           ),
@@ -391,8 +408,13 @@ class _B30DemoPageState extends State<B30DemoPage> {
         _InputCard(
           title: 'Screen Timeout',
           icon: Icons.timer_outlined,
-          fields: [_Fld('Seconds (30–300)', _screentimeCtrl,
-              type: TextInputType.number)],
+          fields: [
+            _Fld(
+              'Seconds (30–300)',
+              _screentimeCtrl,
+              type: TextInputType.number,
+            ),
+          ],
           onSend: () {
             final secs = int.tryParse(_screentimeCtrl.text.trim());
             if (secs == null || secs < 30 || secs > 300) {
@@ -408,7 +430,9 @@ class _B30DemoPageState extends State<B30DemoPage> {
         _InputCard(
           title: 'Raw Command',
           icon: Icons.terminal,
-          fields: [_Fld('Command (newline appended automatically)', _rawCmdCtrl)],
+          fields: [
+            _Fld('Command (newline appended automatically)', _rawCmdCtrl),
+          ],
           onSend: () {
             final cmd = _rawCmdCtrl.text.trim();
             if (cmd.isEmpty) {
@@ -463,7 +487,8 @@ class _StatusBar extends StatelessWidget {
             ),
             if (isConnecting)
               const SizedBox(
-                width: 18, height: 18,
+                width: 18,
+                height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             else
@@ -562,11 +587,16 @@ class _InputCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, size: 18,
-                    color: iconColor ?? Theme.of(context).colorScheme.primary),
+                Icon(
+                  icon,
+                  size: 18,
+                  color: iconColor ?? Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
-                Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
               ],
             ),
             const SizedBox(height: 10),

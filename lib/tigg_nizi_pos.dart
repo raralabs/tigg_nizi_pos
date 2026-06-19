@@ -62,12 +62,17 @@ class TiggNiziPos {
   }) =>
       sendCommand('TEXT**$mainTitle**$subtitle**$message');
 
-  /// Displays a QR code with an amount label.
+  /// Displays a QR code.
+  ///
+  /// [amount] — amount with currency, e.g. `"Rs. 1234.00"` (max 60 chars).
+  /// [actionText] — instruction label, e.g. `"Scan to pay"` (max 44 chars).
+  /// [qrData] — the QR payload / URL (max 399 chars for low error-correction).
   Future<void> displayQR({
     required String amount,
+    required String actionText,
     required String qrData,
   }) =>
-      sendCommand('QR**$amount**$qrData');
+      sendCommand('QR**$amount**$actionText**$qrData');
 
   // ── Status screens ─────────────────────────────────────────────────────────
 

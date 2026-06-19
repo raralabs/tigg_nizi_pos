@@ -138,7 +138,7 @@ class TiggNiziPosPlugin : FlutterPlugin, MethodCallHandler {
 
     private fun requestPermission(ctx: Context, manager: UsbManager, device: UsbDevice) {
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         } else {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
